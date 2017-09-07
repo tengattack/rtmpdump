@@ -545,6 +545,9 @@ static const char *optinfo[] = {
 	"string", "integer", "boolean", "AMF" };
 
 #define OFF(x)	offsetof(struct RTMP,x)
+#ifdef WIN32
+typedef long int off_t;
+#endif
 
 static struct urlopt {
   AVal name;
@@ -1381,7 +1384,7 @@ RTMP_ClientPacket(RTMP *r, RTMPPacket *packet)
   return bHasMediaPacket;
 }
 
-#ifdef _DEBUG
+#ifdef RTMP_DUMP
 extern FILE *netstackdump;
 extern FILE *netstackdump_read;
 #endif
@@ -1469,7 +1472,7 @@ ReadN(RTMP *r, char *buffer, int n)
 	        return FALSE;
 	}
       /*RTMP_Log(RTMP_LOGDEBUG, "%s: %d bytes\n", __FUNCTION__, nBytes); */
-#ifdef _DEBUG
+#ifdef RTMP_DUMP
       fwrite(ptr, 1, nBytes, netstackdump_read);
 #endif
 
@@ -4298,7 +4301,7 @@ RTMPSockBuf_Send(RTMPSockBuf *sb, const char *buf, int len)
 {
   int rc;
 
-#ifdef _DEBUG
+#ifdef RTMP_DUMP
   fwrite(buf, 1, len, netstackdump);
 #endif
 
