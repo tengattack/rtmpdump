@@ -1064,6 +1064,7 @@ RTMP_Connect(RTMP *r, RTMPPacket *cp)
 static int
 SocksNegotiate(RTMP *r)
 {
+#ifdef RTMP_SOCKS4
   unsigned long addr;
   struct sockaddr_in service;
   memset(&service, 0, sizeof(struct sockaddr_in));
@@ -1090,11 +1091,98 @@ SocksNegotiate(RTMP *r)
       {
         return TRUE;
       }
-    else
-      {
-        RTMP_Log(RTMP_LOGERROR, "%s, SOCKS returned error code %d", __FUNCTION__, packet[1]);
-        return FALSE;
-      }
+#else
+	// https://www.ietf.org/rfc/rfc1928.txt
+
+	char nego_packet[] = { 5, 1, 0 };
+	// negotiation
+	WriteN(r, nego_packet, sizeof nego_packet);
+	if (ReadN(r, nego_packet, 2) != 2)
+	{
+		// negotiation failed
+		return FALSE;
+	}
+
+	// NO AUTHENTICATION REQUIRED
+	if (nego_packet[0] != 5 || nego_packet[1] != 0)
+	{
+		return FALSE;
+	}
+
+	{
+		int name_len = 0;
+		char *packet;
+		int packet_len;
+		int rest_len;
+
+		for (name_len = 0; name_len < r->Link.hostname.av_len; name_len++) {
+			if (r->Link.hostname.av_val[name_len] == '/') {
+				break;
+			}
+		}
+
+		// init package size
+		packet_len = 7 + name_len;
+		packet = malloc(packet_len + 1);
+
+		packet[0] = 5;
+		packet[1] = 1;  /* SOCKS 5, connect */
+		packet[2] = 0;
+		packet[3] = 3;  /* domain name */
+		packet[4] = name_len;
+		memcpy(&packet[5], r->Link.hostname.av_val, name_len);
+		packet[5 + name_len] = (r->Link.port >> 8) & 0xFF;
+		packet[6 + name_len] = (r->Link.port) & 0xFF;
+		packet[7 + name_len] = 0;  /* NULL terminate */
+
+		WriteN(r, packet, packet_len);
+
+		// read with first byte on BND.ADDR
+		if (ReadN(r, packet, 5) != 5)
+		{
+			free(packet);
+			return FALSE;
+		}
+
+		if (packet[0] != 5 || packet[1] != 0)
+		{
+			free(packet);
+			goto error_l;
+		}
+
+		switch (packet[3]) /* ATYP */
+		{
+		case 1:
+			/* ipv4 */
+			rest_len = 4 - 1 + 2;
+			break;
+		case 3:
+			/* domain name */
+			rest_len = (unsigned char)packet[4] + 2;
+			break;
+		case 4:
+			/* ipv6 */
+			rest_len = 8 - 1 + 2;
+			break;
+		default:
+			free(packet);
+			return FALSE;
+		}
+
+		if (ReadN(r, &packet[5], rest_len) != rest_len)
+		{
+			free(packet);
+			return FALSE;
+		}
+
+		free(packet);
+		return TRUE;
+
+error_l:
+#endif
+
+    RTMP_Log(RTMP_LOGERROR, "%s, SOCKS returned error code %d", __FUNCTION__, packet[1]);
+    return FALSE;
   }
 }
 
@@ -1535,9 +1623,16 @@ WriteN(RTMP *r, const char *buffer, int n)
 	  int sockerr = GetSockError();
 	  RTMP_Log(RTMP_LOGERROR, "%s, RTMP send error %d (%d bytes)", __FUNCTION__,
 	      sockerr, n);
-
+#ifdef _WIN32
+      if (sockerr == WSAEINTR && !RTMP_ctrlC)
+        continue;
+#else
 	  if (sockerr == EINTR && !RTMP_ctrlC)
 	    continue;
+#endif
+
+      if (r->m_bClosing)
+	    break;
 
 	  RTMP_Close(r);
 	  n = 1;
@@ -4137,6 +4232,7 @@ CloseInternal(RTMP *r, int reconnect)
 {
   int i;
 
+  r->m_bClosing = TRUE;
   if (RTMP_IsConnected(r))
     {
       if (r->m_stream_id > 0)

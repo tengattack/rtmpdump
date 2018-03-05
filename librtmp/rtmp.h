@@ -257,6 +257,7 @@ extern "C"
     int m_nClientBW;
     uint8_t m_nClientBW2;
     uint8_t m_bPlaying;
+    uint8_t m_bClosing;
     uint8_t m_bSendEncoding;
     uint8_t m_bSendCounter;
 
